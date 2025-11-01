@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Interactive Map - GitHub Pages</title>
+<style>
+  :root{
+    --bg:#e6e6ff;
+    --stroke:#111;
+    --legend-bg:#fff;
+    --panel-bg: rgba(255,255,255,0.95);
+  }
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;}
+  body{display:flex;align-items:center;justify-content:center;background:var(--bg);padding:24px;}
+  .container{max-width:900px;width:100%;background:var(--panel-bg);border-radius:10px;padding:16px;box-shadow:0 6px 30px rgba(0,0,0,.08);display:flex;gap:16px;}
+  .left{flex:1;min-width:320px;display:flex;flex-direction:column;align-items:center;gap:8px;}
+  .map-wrap{position:relative;width:100%;max-width:520px;}
+  img#mapImg{display:block;width:100%;height:auto;border:6px solid #111;border-radius:6px;}
+  svg#overlay{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+  button{padding:8px 10px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;}
+  .right{width:260px;padding:12px;border-left:1px dashed rgba(0,0,0,.06);}
+  .legend{background:var(--legend-bg);padding:8px;border-radius:8px;border:1px solid #ddd;}
+  .legend h3{margin:0 0 8px 0;font-size:15px;}
+  .legend .row{display:flex;align-items:center;gap:8px;margin:6px 0;}
+  .sw{width:26px;height:18px;border-radius:4px;border:1px solid #999;flex:0 0 26px;}
+  .score{margin-top:12px;font-weight:700;font-size:18px;}
+  textarea{width:100%;height:100px;font-family:monospace;margin-top:8px;}
+  small{color:#666;}
+  .hint{font-size:13px;color:#444;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="left">
+    <div class="map-wrap" id="mapWrap">
+      <img id="mapImg" src="map.png" alt="Map image">
+      <svg id="overlay" viewBox="0 0 1024 1536" preserveAspectRatio="xMinYMin meet"></svg>
+    </div>
+    <div class="controls">
+      <button id="exportBtn">Export JSON</button>
+      <button id="importBtn">Import JSON</button>
+      <button id="resetBtn">Reset statuses</button>
+      <span class="hint">Click any region to cycle status → color changes & points update</span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="legend">
+      <h3>Legend & Points</h3>
+      <div class="row"><div class="sw" style="background:#ff8a8a"></div><div>Lived Here — 5 pts</div></div>
+      <div class="row"><div class="sw" style="background:#ffce8a"></div><div>Stayed Here — 4 pts</div></div>
+      <div class="row"><div class="sw" style="background:#fff28a"></div><div>Visited Here — 3 pts</div></div>
+      <div class="row"><div class="sw" style="background:#b7f591"></div><div>Stopped Here — 2 pts</div></div>
+      <div class="row"><div class="sw" style="background:#9fd7ff"></div><div>Passed Here — 1 pt</div></div>
+      <div class="row"><div class="sw" style="background:#c7a8ff"></div><div>Want to be Here — 0 pts</div></div>
+      <div class="row"><div class="sw" style="background:#e9e9ee"></div><div>Never Been Here — 0 pts</div></div>
+      <div class="score" id="score">Score: 0</div>
+    </div>
+    <div style="margin-top:12px">
+      <small>Regions JSON (save / paste to import)</small>
+      <textarea id="jsonArea" placeholder="Exported JSON will appear here"></textarea>
+    </div>
+  </div>
+</div>
+<script>
+const IMG_SRC = 'map.png';
+const STATUS = [
+  {name:'Never Been Here', color:'#e9e9ee', points:0},
+  {name:'Want to be Here', color:'#c7a8ff', points:0},
+  {name:'Passed Here', color:'#9fd7ff', points:1},
+  {name:'Stopped Here', color:'#b7f591', points:2},
+  {name:'Visited Here', color:'#fff28a', points:3},
+  {name:'Stayed Here', color:'#ffce8a', points:4},
+  {name:'Lived Here', color:'#ff8a8a', points:5}
+];
+let regions = [
+  [[412,40, 612,40, 612,180, 412,180], 0, "Top Tower"],
+  [[412,190, 612,190, 612,320, 512,320, 452,260, 412,260], 0, "Upper Slant"],
+  [[612,260, 752,260, 752,360, 612,360], 0, "Small Right"],
+  [[412,360, 612,360, 612,480, 412,480], 0, "Upper Middle"],
+  [[412,490, 612,490, 612,680, 412,680], 0, "Middle Big"],
+  [[412,690, 560,690, 560,820, 412,820], 0, "Step Left"],
+  [[560,760, 720,760, 680,920, 560,920], 0, "Lower Right"],
+  [[412,920, 712,920, 712,1040, 412,1040], 0, "Lower Band"],
+  [[412,1048, 512,1048, 512,1190, 412,1190], 0, "Bottom Left"],
+  [[512,1048, 712,1048, 712,1190, 512,1190], 0, "Bottom Right"],
+  [[412,1198, 712,1198, 812,1536, 312,1536], 0, "Tip"]
+];
+const img = document.getElementById('mapImg');
+const overlay = document.getElementById('overlay');
+const jsonArea = document.getElementById('jsonArea');
+const scoreEl = document.getElementById('score');
+img.src = IMG_SRC;
+function createPolygonEl(polyCoords, id, statusIndex){
+  const poly = document.createElementNS("http://www.w3.org/2000/svg",'polygon');
+  poly.setAttribute('points', polyCoords.join(' '));
+  poly.setAttribute('fill', STATUS[statusIndex].color);
+  poly.setAttribute('stroke', '#111');
+  poly.setAttribute('stroke-width', 3);
+  poly.setAttribute('data-id', id);
+  poly.style.cursor = 'pointer';
+  poly.style.pointerEvents = 'visiblePainted';
+  return poly;
+}
+function renderOverlay(){
+  while(overlay.firstChild) overlay.removeChild(overlay.firstChild);
+  regions.forEach((r, i)=>{
+    const [coords, status, label] = r;
+    const poly = createPolygonEl(coords.flat(), i, status);
+    poly.addEventListener('click', (ev) => { ev.stopPropagation(); cycleStatus(i); });
+    overlay.appendChild(poly);
+  });
+  updateScore();
+}
+function cycleStatus(i){
+  regions[i][1] = (regions[i][1] + 1) % STATUS.length;
+  const poly = overlay.querySelector(`polygon[data-id="${i}"]`);
+  if(poly) poly.setAttribute('fill', STATUS[regions[i][1]].color);
+  updateScore();
+}
+function updateScore(){
+  let score = 0;
+  regions.forEach(r => score += STATUS[r[1]].points);
+  scoreEl.textContent = 'Score: ' + score;
+}
+document.getElementById('exportBtn').addEventListener('click', ()=> {
+  const out = JSON.stringify(regions, null, 2);
+  jsonArea.value = out;
+  const blob = new Blob([out], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'regions.json'; a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('importBtn').addEventListener('click', ()=> {
+  try{
+    const parsed = JSON.parse(jsonArea.value);
+    regions = parsed.map(item => [item[0], Number(item[1]||0), String(item[2]||'Region')]);
+    renderOverlay();
+  }catch(e){ alert('Import error: ' + e); }
+});
+document.getElementById('resetBtn').addEventListener('click', ()=> {
+  regions = regions.map(r => [r[0], 0, r[2]]);
+  renderOverlay();
+  jsonArea.value = '';
+});
+img.addEventListener('load', ()=> { renderOverlay(); });
+if(img.complete) renderOverlay();
+</script>
+</body>
+</html>
